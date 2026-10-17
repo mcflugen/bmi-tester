@@ -1,34 +1,48 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Literal
+
 import numpy as np
 from bmipy import Bmi
+from numpy.typing import NDArray
+
+
+@dataclass(eq=False)
+class Variable:
+    values: NDArray
+    grid: int
+    location: str
+    units: str
+    intent: Literal["in", "inout", "out"]
+
+
+@dataclass(eq=False)
+class UnstructuredGrid:
+    grid_type: str = "unstructured"
+    x: NDArray | None = None
+    y: NDArray | None = None
+    z: NDArray | None = None
+    edge_nodes: NDArray | None = None
+    face_edges: NDArray | None = None
+    face_nodes: NDArray | None = None
+    nodes_per_face: NDArray | None = None
+
+
+@dataclass
+class Time:
+    start: float
+    end: float
+    step: float
+    current: float
+    units: str
 
 
 class UnstructuredBmi(Bmi):
 
-    def __init__(self):
-        self._values = {
-            "land_surface__elevation": np.ones(12, dtype=float),
-            "land_surface_air__temperature": np.ones(12, dtype=float),
-            "land_surface~10m-above_air_flow__speed": np.ones(12, dtype=float),
-        }
-
-        self._var_units = {
-            "land_surface__elevation": "m",
-            "land_surface_air__temperature": "C",
-            "land_surface~10m-above_air_flow__speed": "m/s",
-        }
-
-        self._input_var_names = (
-            "land_surface__elevation",
-            "land_surface_air__temperature",
-        )
-        self._output_var_names = (
-            "land_surface__elevation",
-            "land_surface~10m-above_air_flow__speed",
-        )
-
-        self._time = 0.0
+    _variables: dict[str, Variable]
+    _grids: dict[str, UnstructuredGrid]
+    _time: Time
 
     def finalize(self) -> None:
         """Perform tear-down tasks for the model.
@@ -37,8 +51,8 @@ class UnstructuredBmi(Bmi):
         loop. This typically includes deallocating memory, closing files and
         printing reports.
         """
-        for array in self._values.values():
-            array[:] = 0.0
+        for var in self._variables.values():
+            var.values.fill(0.0)
 
     def get_component_name(self) -> str:
         """Name of the component.
@@ -58,7 +72,7 @@ class UnstructuredBmi(Bmi):
         float
             The current model time.
         """
-        return self._time
+        return self._time.current
 
     def get_end_time(self) -> float:
         """End time of the model.
@@ -68,7 +82,7 @@ class UnstructuredBmi(Bmi):
         float
             The maximum model time.
         """
-        return 10.0
+        return self._time.end
 
     def get_grid_edge_count(self, grid: int) -> int:
         """Get the number of edges in the grid.
@@ -83,7 +97,8 @@ class UnstructuredBmi(Bmi):
         int
             The total number of grid edges.
         """
-        return 6
+        values = self._grids[grid].edge_nodes
+        return 0 if values is None else len(values.reshape((-1, 2)))
 
     def get_grid_edge_nodes(self, grid: int, edge_nodes: np.ndarray) -> np.ndarray:
         """Get the edge-node connectivity.
@@ -102,14 +117,10 @@ class UnstructuredBmi(Bmi):
         ndarray of int
             The input numpy array that holds the edge-node connectivity.
         """
-        edge_nodes[:] = [
-            *[0, 1],
-            *[1, 2],
-            *[0, 3],
-            *[1, 4],
-            *[4, 2],
-            *[3, 4],
-        ]
+        values = self._grids[grid].edge_nodes
+        if values is None:
+            raise NotImplementedError("get_grid_edge_nodes")
+        edge_nodes[:] = values
         return edge_nodes
 
     def get_grid_face_count(self, grid: int) -> int:
@@ -125,7 +136,8 @@ class UnstructuredBmi(Bmi):
         int
             The total number of grid faces.
         """
-        return 2
+        values = self._grids[grid].nodes_per_face
+        return 0 if values is None else len(values)
 
     def get_grid_face_edges(self, grid: int, face_edges: np.ndarray) -> np.ndarray:
         """Get the face-edge connectivity.
@@ -142,10 +154,10 @@ class UnstructuredBmi(Bmi):
         ndarray of int
             The input numpy array that holds the face-edge connectivity.
         """
-        face_edges[:] = [
-            *[0, 3, 5, 2],
-            *[1, 4, 3],
-        ]
+        values = self._grids[grid].face_edges
+        if values is None:
+            raise NotImplementedError("get_grid_face_edges")
+        face_edges[:] = values
         return face_edges
 
     def get_grid_face_nodes(self, grid: int, face_nodes: np.ndarray) -> np.ndarray:
@@ -165,10 +177,10 @@ class UnstructuredBmi(Bmi):
         ndarray of int
             The input numpy array that holds the face-node connectivity.
         """
-        face_nodes[:] = [
-            *[0, 1, 4, 3],
-            *[1, 2, 4],
-        ]
+        values = self._grids[grid].face_nodes
+        if values is None:
+            raise NotImplementedError("get_grid_face_nodes")
+        face_nodes[:] = values
         return face_nodes
 
     def get_grid_node_count(self, grid: int) -> int:
@@ -184,7 +196,7 @@ class UnstructuredBmi(Bmi):
         int
             The total number of grid nodes.
         """
-        return 5
+        return len(self._grids[grid].x)
 
     def get_grid_nodes_per_face(
         self, grid: int, nodes_per_face: np.ndarray
@@ -203,7 +215,10 @@ class UnstructuredBmi(Bmi):
         ndarray of int
             The input numpy array that holds the number of nodes per face.
         """
-        nodes_per_face[:] = [4, 3]
+        values = self._grids[grid].nodes_per_face
+        if values is None:
+            raise NotImplementedError("get_grid_nodes_per_face")
+        nodes_per_face[:] = values
         return nodes_per_face
 
     def get_grid_origin(self, grid: int, origin: np.ndarray) -> np.ndarray:
@@ -238,7 +253,8 @@ class UnstructuredBmi(Bmi):
         int
             Rank of the grid.
         """
-        return 3
+        grid = self._grids[grid]
+        return len([dim for dim in (grid.x, grid.y, grid.z) if dim is not None])
 
     def get_grid_shape(self, grid: int, shape: np.ndarray) -> np.ndarray:
         """Get dimensions of the computational grid.
@@ -270,7 +286,7 @@ class UnstructuredBmi(Bmi):
         int
             Size of the grid.
         """
-        return 5
+        return self.get_grid_node_count(grid)
 
     def get_grid_spacing(self, grid: int, spacing: np.ndarray) -> np.ndarray:
         """Get distance between nodes of the computational grid.
@@ -302,7 +318,7 @@ class UnstructuredBmi(Bmi):
         str
             Type of grid as a string.
         """
-        return "unstructured"
+        return self._grids[grid].grid_type
 
     def get_grid_x(self, grid: int, x: np.ndarray) -> np.ndarray:
         """Get coordinates of grid nodes in the x direction.
@@ -319,7 +335,10 @@ class UnstructuredBmi(Bmi):
         ndarray of float
             The input numpy array that holds the grid's column x-coordinates.
         """
-        x[:] = [0, 1, 2, 0, 1]
+        values = self._grids[grid].x
+        if values is None:
+            raise NotImplementedError("get_grid_x")
+        x[:] = values
         return x
 
     def get_grid_y(self, grid: int, y: np.ndarray) -> np.ndarray:
@@ -337,7 +356,10 @@ class UnstructuredBmi(Bmi):
         ndarray of float
             The input numpy array that holds the grid's row y-coordinates.
         """
-        y[:] = [0, 0, 0, 1, 1]
+        values = self._grids[grid].y
+        if values is None:
+            raise NotImplementedError("get_grid_y")
+        y[:] = values
         return y
 
     def get_grid_z(self, grid: int, z: np.ndarray) -> np.ndarray:
@@ -355,7 +377,10 @@ class UnstructuredBmi(Bmi):
         ndarray of float
             The input numpy array that holds the grid's layer z-coordinates.
         """
-        z[:] = 2.0
+        values = self._grids[grid].z
+        if values is None:
+            raise NotImplementedError("get_grid_z")
+        z[:] = values
         return z
 
     def get_input_item_count(self) -> int:
@@ -366,7 +391,7 @@ class UnstructuredBmi(Bmi):
         int
           The number of input variables.
         """
-        return len(self._input_var_names)
+        return len(self.get_input_var_names())
 
     def get_input_var_names(self) -> tuple[str]:
         """List of a model's input variables.
@@ -388,7 +413,13 @@ class UnstructuredBmi(Bmi):
 
         Standard Names do not have to be used within the model.
         """
-        return self._input_var_names
+        return tuple(
+            sorted(
+                name
+                for name, var in self._variables.items()
+                if var.intent.startswith("in")
+            )
+        )
 
     def get_output_item_count(self) -> int:
         """Count of a model's output variables.
@@ -398,7 +429,7 @@ class UnstructuredBmi(Bmi):
         int
           The number of output variables.
         """
-        return len(self._output_var_names)
+        return len(self.get_output_var_names())
 
     def get_output_var_names(self) -> tuple[str]:
         """List of a model's output variables.
@@ -411,7 +442,13 @@ class UnstructuredBmi(Bmi):
         list of str
             The output variables for the model.
         """
-        return self._output_var_names
+        return tuple(
+            sorted(
+                name
+                for name, var in self._variables.items()
+                if var.intent.endswith("out")
+            )
+        )
 
     def get_start_time(self) -> float:
         """Start time of the model.
@@ -423,7 +460,7 @@ class UnstructuredBmi(Bmi):
         float
             The model start time.
         """
-        return 0.0
+        return self._time.start
 
     def get_time_step(self) -> float:
         """Return the current time step of the model.
@@ -435,7 +472,7 @@ class UnstructuredBmi(Bmi):
         float
             The time step used in model.
         """
-        return 1.0
+        return self._time.step
 
     def get_time_units(self) -> str:
         """Time units of the model.
@@ -449,7 +486,7 @@ class UnstructuredBmi(Bmi):
         -----
         CSDMS uses the UDUNITS standard from Unidata.
         """
-        return "s"
+        return self._time.units
 
     def get_value(self, name: str, dest: np.ndarray) -> np.ndarray:
         """Get a copy of values of the given variable.
@@ -470,7 +507,7 @@ class UnstructuredBmi(Bmi):
         ndarray
             The same numpy array that was passed as an input buffer.
         """
-        dest[:] = self._values[name]
+        dest[:] = self._variables[name].values
         return dest
 
     def get_value_at_indices(
@@ -492,7 +529,8 @@ class UnstructuredBmi(Bmi):
         array_like
             Value of the model variable at the given location.
         """
-        raise NotImplementedError("get_value_at_indices")
+        dest[inds] = self._variables[name].values[inds]
+        return dest
 
     def get_value_ptr(self, name: str) -> np.ndarray:
         """Get a reference to values of the given variable.
@@ -511,7 +549,7 @@ class UnstructuredBmi(Bmi):
         array_like
             A reference to a model variable.
         """
-        raise NotImplementedError("get_value_ptr")
+        return self._variables[name].values
 
     def get_var_grid(self, name: str) -> int:
         """Get grid identifier for the given variable.
@@ -526,7 +564,7 @@ class UnstructuredBmi(Bmi):
         int
           The grid identifier.
         """
-        return 0
+        return self._variables[name].grid
 
     def get_var_itemsize(self, name: str) -> int:
         """Get memory use for each array element in bytes.
@@ -541,7 +579,7 @@ class UnstructuredBmi(Bmi):
         int
             Item size in bytes.
         """
-        return self._values[name].itemsize
+        return self._variables[name].values.itemsize
 
     def get_var_location(self, name: str) -> str:
         """Get the grid element type that the a given variable is defined on.
@@ -577,7 +615,7 @@ class UnstructuredBmi(Bmi):
 
         .. _ugrid conventions: http://ugrid-conventions.github.io/ugrid-conventions
         """
-        return "node"
+        return self._variables[name].location
 
     def get_var_nbytes(self, name: str) -> int:
         """Get size, in bytes, of the given variable.
@@ -592,7 +630,7 @@ class UnstructuredBmi(Bmi):
         int
             The size of the variable, counted in bytes.
         """
-        return self._values[name].nbytes
+        return self._variables[name].values.nbytes
 
     def get_var_type(self, name: str) -> str:
         """Get data type of the given variable.
@@ -607,7 +645,7 @@ class UnstructuredBmi(Bmi):
         str
             The Python variable type; e.g., ``str``, ``int``, ``float``.
         """
-        return "float"
+        return self._variables[name].values.dtype.name
 
     def get_var_units(self, name: str) -> str:
         """Get units of the given variable.
@@ -636,7 +674,7 @@ class UnstructuredBmi(Bmi):
 
         .. _UDUNITS: http://www.unidata.ucar.edu/software/udunits
         """
-        return self._var_units[name]
+        return self._variables[name].units
 
     def initialize(self, config_file: str) -> None:
         """Perform startup tasks for the model.
@@ -677,7 +715,7 @@ class UnstructuredBmi(Bmi):
         src : array_like
             The new value for the specified variable.
         """
-        self._values[name][:] = src
+        self._variables[name].values[:] = src
 
     def set_value_at_indices(
         self, name: str, inds: np.ndarray, src: np.ndarray
@@ -693,7 +731,7 @@ class UnstructuredBmi(Bmi):
         src : array_like
             The new value for the specified variable.
         """
-        raise NotImplementedError("set_value_at_indices")
+        self._variables[name].values[inds] = src
 
     def update(self) -> None:
         """Advance model state by one time step.
@@ -715,3 +753,157 @@ class UnstructuredBmi(Bmi):
             A model time later than the current model time.
         """
         raise NotImplementedError("update_until")
+
+
+class UnstructuredNodesBmi(UnstructuredBmi):
+
+    def __init__(self):
+        self._variables = {
+            "land_surface__elevation": Variable(
+                values=np.ones(5, dtype=float),
+                grid=0,
+                location="node",
+                units="m",
+                intent="inout",
+            )
+        }
+
+        self._grids = {
+            0: UnstructuredGrid(
+                x=np.array([0, 1, 2, 0, 1], float),
+                y=np.array([0, 0, 0, 1, 1], float),
+                z=np.array([2, 2, 2, 2, 2], float),
+            ),
+        }
+
+        self._time = Time(
+            start=0.0,
+            end=10.0,
+            step=3.0,
+            current=0.0,
+            units="s",
+        )
+
+
+class UnstructuredNodesEdgesBmi(UnstructuredNodesBmi):
+    def __init__(self):
+        self._variables = {
+            "land_surface__elevation": Variable(
+                values=np.ones(5, dtype=float),
+                grid=0,
+                location="node",
+                units="m",
+                intent="inout",
+            ),
+            "land_surface_air__temperature": Variable(
+                values=np.ones(6, dtype=float),
+                grid=0,
+                location="edge",
+                units="C",
+                intent="in",
+            ),
+        }
+
+        self._grids = {
+            0: UnstructuredGrid(
+                x=np.array([0, 1, 2, 0, 1], float),
+                y=np.array([0, 0, 0, 1, 1], float),
+                z=np.array([2, 2, 2, 2, 2], float),
+                edge_nodes=np.asarray(
+                    [
+                        *[0, 1],
+                        *[1, 2],
+                        *[0, 3],
+                        *[1, 4],
+                        *[4, 2],
+                        *[3, 4],
+                    ],
+                    dtype=int,
+                ),
+            ),
+        }
+
+        self._time = Time(
+            start=0.0,
+            end=10.0,
+            step=3.0,
+            current=0.0,
+            units="s",
+        )
+
+
+class UnstructuredNodesEdgesFacesBmi(UnstructuredBmi):
+
+    def __init__(self):
+        self._variables = {
+            "land_surface__elevation": Variable(
+                values=np.ones(5, dtype=float),
+                grid=0,
+                location="node",
+                units="m",
+                intent="inout",
+            ),
+            "land_surface_air__temperature": Variable(
+                values=np.ones(6, dtype=float),
+                grid=0,
+                location="edge",
+                units="C",
+                intent="in",
+            ),
+            "land_surface~10m-above_air_flow__speed": Variable(
+                values=np.ones(2, dtype=float),
+                grid=0,
+                location="face",
+                units="m/s",
+                intent="out",
+            ),
+            "air__temperature": Variable(
+                values=np.ones(1, dtype=float),
+                grid=0,
+                location="none",
+                units="C",
+                intent="inout",
+            ),
+        }
+
+        self._grids = {
+            0: UnstructuredGrid(
+                x=np.array([0, 1, 2, 0, 1], float),
+                y=np.array([0, 0, 0, 1, 1], float),
+                z=np.array([2, 2, 2, 2, 2], float),
+                edge_nodes=np.asarray(
+                    [
+                        *[0, 1],
+                        *[1, 2],
+                        *[0, 3],
+                        *[1, 4],
+                        *[4, 2],
+                        *[3, 4],
+                    ],
+                    dtype=int,
+                ),
+                face_edges=np.asarray(
+                    [
+                        *[0, 3, 5, 2],
+                        *[1, 4, 3],
+                    ],
+                    dtype=int,
+                ),
+                face_nodes=np.asarray(
+                    [
+                        *[0, 1, 4, 3],
+                        *[1, 2, 4],
+                    ],
+                    dtype=int,
+                ),
+                nodes_per_face=np.asarray([4, 3], dtype=int),
+            ),
+        }
+
+        self._time = Time(
+            start=0.0,
+            end=10.0,
+            step=3.0,
+            current=0.0,
+            units="s",
+        )

@@ -206,7 +206,7 @@ class UniformRectilinearBmi(Bmi):
             The input numpy array that holds the coordinates of the grid's
             lower-left corner.
         """
-        origin[:] = (-1.0, 2.0)
+        origin[:] = (-1.0, 2.0, 1.0)
         return origin
 
     def get_grid_rank(self, grid: int) -> int:
@@ -222,7 +222,7 @@ class UniformRectilinearBmi(Bmi):
         int
             Rank of the grid.
         """
-        return 2
+        return 3
 
     def get_grid_shape(self, grid: int, shape: np.ndarray) -> np.ndarray:
         """Get dimensions of the computational grid.
@@ -239,7 +239,7 @@ class UniformRectilinearBmi(Bmi):
         ndarray of int
             The input numpy array that holds the grid's shape.
         """
-        shape[:] = (3, 4)
+        shape[:] = (3, 4, 1)
         return shape
 
     def get_grid_size(self, grid: int) -> int:
@@ -272,7 +272,7 @@ class UniformRectilinearBmi(Bmi):
         ndarray of float
             The input numpy array that holds the grid's spacing.
         """
-        spacing[:] = (10.0, 20.0)
+        spacing[:] = (10.0, 20.0, 1.0)
         return spacing
 
     def get_grid_type(self, grid: int) -> str:
