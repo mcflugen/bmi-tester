@@ -741,4 +741,3 @@ class PointsBmiV1(PointsBmi):
             Rank of the grid.
         """
         return 0
-
